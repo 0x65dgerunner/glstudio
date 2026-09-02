@@ -9,6 +9,8 @@
 
 Realtime native **glTF / GLB** look-development studio. Drop a model on the viewport, light it with HDRI and a three-point rig, inspect PBR channels, play animations, and export stills or turntables — without a browser, a DCC, or a cloud viewer.
 
+![Gridora demo](./demo/screen-2.png)
+
 ---
 
 ## What it is
