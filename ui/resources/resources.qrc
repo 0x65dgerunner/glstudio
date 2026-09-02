@@ -1,0 +1,48 @@
+<RCC>
+    <qresource prefix="/fonts">
+        <file alias="geist/thin.otf">fonts/Geist/Geist-Thin.otf</file>
+        <file alias="geist/extralight.otf">fonts/Geist/Geist-ExtraLight.otf</file>
+        <file alias="geist/light.otf">fonts/Geist/Geist-Light.otf</file>
+        <file alias="geist/regular.otf">fonts/Geist/Geist-Regular.otf</file>
+        <file alias="geist/medium.otf">fonts/Geist/Geist-Medium.otf</file>
+        <file alias="geist/semibold.otf">fonts/Geist/Geist-SemiBold.otf</file>
+        <file alias="geist/bold.otf">fonts/Geist/Geist-Bold.otf</file>
+        <file alias="geist/extrabold.otf">fonts/Geist/Geist-ExtraBold.otf</file>
+        <file alias="geist/black.otf">fonts/Geist/Geist-Black.otf</file>
+        <file alias="geistmono/regular.otf">fonts/GeistMono/GeistMono-Regular.otf</file>
+        <file alias="geistmono/medium.otf">fonts/GeistMono/GeistMono-Medium.otf</file>
+        <file alias="geistmono/semibold.otf">fonts/GeistMono/GeistMono-SemiBold.otf</file>
+        <file alias="geistmono/bold.otf">fonts/GeistMono/GeistMono-Bold.otf</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="logo.svg">icons/logo.svg</file>
+        <file alias="catalog.json">icons/catalog.json</file>
+        <file alias="blender.json">icons/blender.json</file>
+        <file alias="stroke/close.svg">icons/stroke/close.svg</file>
+        <file alias="stroke/chevron-down.svg">icons/stroke/chevron-down.svg</file>
+        <file alias="stroke/chevron-up.svg">icons/stroke/chevron-up.svg</file>
+        <file alias="stroke/chevron-right.svg">icons/stroke/chevron-right.svg</file>
+        <file alias="stroke/chevron-left.svg">icons/stroke/chevron-left.svg</file>
+        <file alias="stroke/check.svg">icons/stroke/check.svg</file>
+        <file alias="stroke/plus.svg">icons/stroke/plus.svg</file>
+        <file alias="stroke/search.svg">icons/stroke/search.svg</file>
+        <file alias="stroke/info.svg">icons/stroke/info.svg</file>
+        <file alias="stroke/alert.svg">icons/stroke/alert.svg</file>
+        <file alias="stroke/minimize.svg">icons/stroke/minimize.svg</file>
+        <file alias="stroke/maximize.svg">icons/stroke/maximize.svg</file>
+        <file alias="stroke/restore.svg">icons/stroke/restore.svg</file>
+        <file alias="solid/close.svg">icons/solid/close.svg</file>
+        <file alias="solid/chevron-down.svg">icons/solid/chevron-down.svg</file>
+        <file alias="solid/chevron-up.svg">icons/solid/chevron-up.svg</file>
+        <file alias="solid/chevron-right.svg">icons/solid/chevron-right.svg</file>
+        <file alias="solid/chevron-left.svg">icons/solid/chevron-left.svg</file>
+        <file alias="solid/check.svg">icons/solid/check.svg</file>
+        <file alias="solid/plus.svg">icons/solid/plus.svg</file>
+        <file alias="solid/search.svg">icons/solid/search.svg</file>
+        <file alias="solid/info.svg">icons/solid/info.svg</file>
+        <file alias="solid/alert.svg">icons/solid/alert.svg</file>
+        <file alias="solid/minimize.svg">icons/solid/minimize.svg</file>
+        <file alias="solid/maximize.svg">icons/solid/maximize.svg</file>
+        <file alias="solid/restore.svg">icons/solid/restore.svg</file>
+    </qresource>
+</RCC>
