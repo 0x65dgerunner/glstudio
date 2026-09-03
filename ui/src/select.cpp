@@ -26,7 +26,8 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_DeleteOnClose);
 
-        constexpr int kRowHeight = 32;
+        const bool tiny = owner != nullptr && owner->size() == Select::Size::Xs;
+        const int kRowHeight = tiny ? 28 : 32;
         constexpr int kMaxVisible = 8;
         constexpr int kSpacing = 2;
         constexpr int kPad = 4;
@@ -46,7 +47,7 @@ public:
             row->setChecked(i == current);
             row->setAutoFillBackground(false);
             row->setFocusPolicy(Qt::NoFocus);
-            row->setFont(Fonts::regular(9.5));
+            row->setFont(Fonts::regular(tiny ? 9.0 : 9.5));
             row->setFixedHeight(kRowHeight);
             row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             Theme::bindStyle(row, []() {
@@ -204,7 +205,15 @@ void Select::setSize(Size size) {
 }
 
 int Select::heightForSize() const {
-    return size_ == Size::Sm ? 32 : 36;
+    switch (size_) {
+        case Size::Xs:
+            return 26;
+        case Size::Sm:
+            return 32;
+        case Size::Default:
+        default:
+            return 36;
+    }
 }
 
 QSize Select::sizeHint() const {
@@ -213,7 +222,7 @@ QSize Select::sizeHint() const {
     for (const Item& item : items_) {
         width = qMax(width, metrics.horizontalAdvance(item.text) + 48);
     }
-    return {qMax(width, 160), heightForSize()};
+    return {qMax(width, size_ == Size::Xs ? 100 : 160), heightForSize()};
 }
 
 QSize Select::minimumSizeHint() const {

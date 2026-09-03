@@ -11,7 +11,7 @@ class Select : public QWidget {
     Q_OBJECT
 
 public:
-    enum class Size { Sm, Default };
+    enum class Size { Xs, Sm, Default };
 
     struct Item {
         QString text;

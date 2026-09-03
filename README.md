@@ -13,6 +13,18 @@ Realtime native **glTF / GLB** look-development studio. Drop a model on the view
 
 ---
 
+## Motivation
+
+The 3D industry has converged on **glTF** as the definitive transmission format for real-time assets. Yet, despite its ubiquity, validating these assets locally remains a fragmented and often frustrating experience.
+
+If you are a 3D artist, technical director, or graphics engineer, your workflow typically faces two extremes:
+1. **The Heavyweights:** Booting up a full DCC (Blender, Maya) or a game engine (Unreal, Unity) just to check if an exported asset looks correct. This is slow, resource-heavy, and often introduces engine-specific shading biases.
+2. **The Web Viewers:** Dragging models into a browser tab. While phenomenal for web distribution, browser tabs artificially constrain GPU memory, limit texture resolutions, complicate local IBL setups due to sandboxing and CORS, and lack the offline rendering capabilities needed for high-res portfolio shots.
+
+**GLStudio was built to bridge this gap.** We needed a lightweight, lightning-fast native desktop application dedicated strictly to physically-based look-development. A tool that opens instantly, leverages the full unrestricted power of your GPU via native OpenGL, handles massive 8K textures without browser crashes, and allows you to light and inspect your models with studio precision. It is the uncompromising local bench for your glTF pipeline.
+
+---
+
 ## What it is
 
 GLStudio is a desktop OpenGL application for previewing production glTF assets the way a lookdev or product-visualization artist would: physically based shading, image-based lighting, studio lights, post-processing, and debug buffers — all in a custom frameless Qt window.

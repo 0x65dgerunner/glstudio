@@ -122,10 +122,15 @@ void bindListRowStyle(QPushButton* row) {
                    "  background: transparent;"
                    "  color: %1;"
                    "}"
-                   "QPushButton:hover, QPushButton:checked {"
+                   "QPushButton:hover {"
                    "  background: %2;"
+                   "}"
+                   "QPushButton:checked {"
+                   "  background: %3;"
+                   "  color: %4;"
                    "}")
-            .arg(Theme::css(Theme::foreground()), Theme::css(Theme::hover()));
+            .arg(Theme::css(Theme::foreground()), Theme::css(Theme::hover()),
+                 Theme::css(Theme::accent()), Theme::css(Theme::accentForeground()));
     });
 }
 
@@ -151,6 +156,20 @@ QString uniqueDestPath(const QString& dir, const QString& fileName) {
     }
     return dest;
 }
+
+class HoverFilter : public QObject {
+public:
+    using Callback = std::function<void(bool)>;
+    HoverFilter(QObject* parent, Callback cb) : QObject(parent), cb_(std::move(cb)) {}
+protected:
+    bool eventFilter(QObject* obj, QEvent* event) override {
+        if (event->type() == QEvent::Enter) cb_(true);
+        else if (event->type() == QEvent::Leave) cb_(false);
+        return QObject::eventFilter(obj, event);
+    }
+private:
+    Callback cb_;
+};
 
 class RailButton : public QAbstractButton {
 public:
@@ -210,16 +229,16 @@ public:
         hide();
 
         auto* root = new QVBoxLayout(this);
-        root->setContentsMargins(14, 12, 12, 12);
-        root->setSpacing(8);
+        root->setContentsMargins(8, 6, 8, 8);
+        root->setSpacing(4);
 
         auto* header = new QWidget(this);
         paintSheetSurface(header);
         headerLayout_ = new QHBoxLayout(header);
-        headerLayout_->setContentsMargins(2, 0, 0, 0);
+        headerLayout_->setContentsMargins(4, 0, 2, 0);
         headerLayout_->setSpacing(0);
         title_ = new QLabel(header);
-        title_->setFont(Fonts::medium(11.5));
+        title_->setFont(Fonts::medium(10.5));
         title_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
         Theme::bindStyle(title_, []() {
             return QStringLiteral("color: %1; background: transparent;")
@@ -237,7 +256,7 @@ public:
         bindMutedIcon(close, QStringLiteral("close"), 14);
         connect(close, &Button::clicked, this, [this]() { closeSheet(); });
         headerLayout_->addWidget(close, 0, Qt::AlignVCenter);
-        header->setMinimumHeight(32);
+        header->setMinimumHeight(28);
         root->addWidget(header);
 
         stack_ = new QStackedWidget(this);
@@ -363,14 +382,25 @@ protected:
     }
 
 private:
-    static constexpr int kWidth = 300;
+    static constexpr int kMinWidth = 240;
+    static constexpr int kMaxWidth = 380;
+    static constexpr int kDefaultWidth = 280;
+
+    int dynamicWidth() const {
+        if (anchor_ == nullptr) {
+            return kDefaultWidth;
+        }
+        const int w = qRound(anchor_->width() * 0.25);
+        return qBound(kMinWidth, w, kMaxWidth);
+    }
 
     QRect shownRect() const {
         if (anchor_ == nullptr || parentWidget() == nullptr) {
-            return QRect(0, 0, kWidth, 400);
+            return QRect(0, 0, kDefaultWidth, 400);
         }
-        const QPoint topLeft = anchor_->mapTo(parentWidget(), QPoint(10, 10));
-        return QRect(topLeft, QSize(kWidth, qMax(120, anchor_->height() - 20)));
+        const int w = dynamicWidth();
+        const QPoint topLeft = anchor_->mapTo(parentWidget(), QPoint(8, 8));
+        return QRect(topLeft, QSize(w, qMax(120, anchor_->height() - 16)));
     }
 
     void relayout(bool visible) {
@@ -390,7 +420,7 @@ private:
         stopAnim();
         anim_ = new QPropertyAnimation(this, "geometry", this);
         anim_->setDuration(Theme::durationSheet());
-        anim_->setEasingCurve(QEasingCurve::OutCubic);
+        anim_->setEasingCurve(QEasingCurve::OutQuart);
         anim_->setStartValue(geometry());
         anim_->setEndValue(target);
         connect(anim_, &QPropertyAnimation::valueChanged, this, [this]() {
@@ -455,8 +485,8 @@ QWidget* makeScrollPage(QVBoxLayout** layoutOut) {
     auto* inner = new QWidget;
     paintSheetSurface(inner);
     auto* layout = new QVBoxLayout(inner);
-    layout->setContentsMargins(2, 2, 2, 10);
-    layout->setSpacing(10);
+    layout->setContentsMargins(2, 2, 2, 6);
+    layout->setSpacing(6);
     *layoutOut = layout;
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true);
@@ -497,7 +527,7 @@ QWidget* sliderRow(const QString& title, Slider* slider, QLabel* value, QWidget*
     auto* wrap = new QWidget(parent);
     auto* layout = new QVBoxLayout(wrap);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(3);
+    layout->setSpacing(2);
     auto* header = new QWidget(wrap);
     auto* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(0, 0, 0, 0);
@@ -513,7 +543,7 @@ QWidget* selectRow(const QString& title, Select* select, QWidget* parent) {
     auto* wrap = new QWidget(parent);
     auto* layout = new QVBoxLayout(wrap);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(3);
+    layout->setSpacing(2);
     layout->addWidget(caption(title, wrap));
     layout->addWidget(select);
     return wrap;
@@ -561,6 +591,90 @@ QWidget* buttonRow(const QList<QWidget*>& buttons, QWidget* parent) {
     }
     return wrap;
 }
+
+void bindSwatchStyle(QPushButton* button, const QColor& color) {
+    Theme::bindStyle(button, [color]() {
+        return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
+            .arg(color.name(), Theme::css(Theme::border()));
+    });
+}
+
+class CollapsibleSection : public QWidget {
+public:
+    CollapsibleSection(const QString& title, bool collapsed, QWidget* parent)
+        : QWidget(parent), title_(title), collapsed_(collapsed) {
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(0, 0, 0, 0);
+        root->setSpacing(0);
+
+        header_ = new QPushButton(this);
+        header_->setFlat(true);
+        header_->setCursor(Qt::PointingHandCursor);
+        header_->setFocusPolicy(Qt::NoFocus);
+        header_->setFont(Fonts::medium(8.5));
+        header_->setFixedHeight(24);
+        header_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        updateHeader(title);
+        Theme::bindStyle(header_, []() {
+            return QStringLiteral(
+                "QPushButton { text-align: left; padding: 0 2px; border: none; "
+                "border-radius: 4px; background: transparent; color: %1; }"
+                "QPushButton:hover { background: %2; }")
+                .arg(Theme::css(Theme::mutedForeground()), Theme::css(Theme::hover()));
+        });
+        root->addWidget(header_);
+
+        content_ = new QWidget(this);
+        auto* contentLay = new QVBoxLayout(content_);
+        contentLay->setContentsMargins(0, 4, 0, 4);
+        contentLay->setSpacing(6);
+        root->addWidget(content_);
+        content_->setVisible(!collapsed_);
+
+        connect(header_, &QPushButton::clicked, this, [this]() {
+            if (collapsed_) {
+                if (auto* p = parentWidget()) {
+                    for (auto* child : p->children()) {
+                        if (auto* sibling = dynamic_cast<CollapsibleSection*>(child)) {
+                            if (sibling != this) sibling->setCollapsed(true);
+                        }
+                    }
+                }
+                setCollapsed(false);
+            } else {
+                setCollapsed(true);
+            }
+        });
+    }
+
+    QVBoxLayout* contentLayout() const {
+        return static_cast<QVBoxLayout*>(content_->layout());
+    }
+
+    QWidget* contentWidget() const { return content_; }
+
+    void setCollapsed(bool c) {
+        if (collapsed_ == c) return;
+        collapsed_ = c;
+        content_->setVisible(!collapsed_);
+        updateHeader(title_);
+    }
+
+private:
+    void updateHeader(const QString& title) {
+        header_->setText(QStringLiteral(" %1").arg(title));
+        if (collapsed_) {
+            header_->setIcon(Icons::icon(Icons::stroke(QStringLiteral("chevron-right")), Theme::mutedForeground()));
+        } else {
+            header_->setIcon(Icons::icon(Icons::stroke(QStringLiteral("chevron-down")), Theme::mutedForeground()));
+        }
+    }
+
+    QString title_;
+    QPushButton* header_ = nullptr;
+    QWidget* content_ = nullptr;
+    bool collapsed_ = false;
+};
 
 void copyUriSidecar(const QString& srcDir, const QString& destDir, const QString& uri) {
     if (uri.isEmpty() || uri.startsWith(QLatin1String("data:"))) {
@@ -664,6 +778,8 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     fov->setRange(18, 75);
     fov->setValue(40);
     auto* autoRotate = new Switch(cameraHost);
+    auto* auto360 = new Switch(cameraHost);
+    auto* floating = new Switch(cameraHost);
     auto* grid = new Switch(worldHost);
     auto* axes = new Switch(worldHost);
     auto* textures = new Switch(materialsHost);
@@ -681,7 +797,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* lightsVis = new Switch(lightsHost);
 
     auto* cameraSelect = new Select(cameraHost);
-    cameraSelect->setSize(Select::Size::Sm);
+    cameraSelect->setSize(Select::Size::Xs);
     cameraSelect->setPlaceholder(QStringLiteral("Scene view"));
     auto* addCamera = new Button(QStringLiteral("Add"), cameraHost);
     addCamera->setVariant(Button::Variant::Outline);
@@ -692,10 +808,8 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* deleteCamera = new Button(QStringLiteral("Delete"), cameraHost);
     deleteCamera->setVariant(Button::Variant::Ghost);
     deleteCamera->setSize(Button::Size::Sm);
-    cameraLay->addWidget(sliderRow(QStringLiteral("Focal length"), fov, fovValue, cameraHost));
-    cameraLay->addWidget(switchRow(QStringLiteral("Auto orbit"), autoRotate, cameraHost));
     auto* sceneCameras = new Select(cameraHost);
-    sceneCameras->setSize(Select::Size::Sm);
+    sceneCameras->setSize(Select::Size::Xs);
     sceneCameras->addItem(QStringLiteral("Orbit"), QStringLiteral("orbit"));
     auto* dofOn = new Switch(cameraHost);
     auto* dofValue = valueLabel(QStringLiteral("0.35"), cameraHost);
@@ -706,21 +820,35 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* focus = new Slider(cameraHost);
     focus->setRange(20, 4000);
     focus->setValue(700);
-    cameraLay->addWidget(reset);
-    cameraLay->addWidget(selectRow(QStringLiteral("Scene camera"), sceneCameras, cameraHost));
-    cameraLay->addWidget(switchRow(QStringLiteral("Depth of field"), dofOn, cameraHost));
-    cameraLay->addWidget(sliderRow(QStringLiteral("DOF amount"), dof, dofValue, cameraHost));
-    cameraLay->addWidget(sliderRow(QStringLiteral("Focus distance"), focus, focusValue, cameraHost));
-    cameraLay->addWidget(caption(QStringLiteral("Alt-click the model to set focus"), cameraHost));
-    cameraLay->addWidget(selectRow(QStringLiteral("Saved cameras"), cameraSelect, cameraHost));
+    auto* focusHint = caption(QStringLiteral("Alt-click the model to set focus"), cameraHost);
+    focusHint->setWordWrap(true);
     auto* cameraName = new Input(cameraHost);
     cameraName->setPlaceholderText(QStringLiteral("Camera name"));
-    cameraLay->addWidget(cameraName);
-    cameraLay->addWidget(buttonRow({addCamera, updateCamera, deleteCamera}, cameraHost));
+    
+    auto* camSection = new CollapsibleSection(QStringLiteral("Camera"), true, cameraHost);
+    auto* camL = camSection->contentLayout();
+    camL->addWidget(sliderRow(QStringLiteral("Focal length"), fov, fovValue, camSection->contentWidget()));
+    camL->addWidget(switchRow(QStringLiteral("Auto orbit"), autoRotate, camSection->contentWidget()));
+    camL->addWidget(switchRow(QStringLiteral("Auto 360"), auto360, camSection->contentWidget()));
+    camL->addWidget(switchRow(QStringLiteral("Floating"), floating, camSection->contentWidget()));
+    camL->addWidget(reset);
+    camL->addWidget(selectRow(QStringLiteral("Scene camera"), sceneCameras, camSection->contentWidget()));
+    camL->addWidget(switchRow(QStringLiteral("Depth of field"), dofOn, camSection->contentWidget()));
+    camL->addWidget(sliderRow(QStringLiteral("DOF amount"), dof, dofValue, camSection->contentWidget()));
+    camL->addWidget(sliderRow(QStringLiteral("Focus distance"), focus, focusValue, camSection->contentWidget()));
+    camL->addWidget(focusHint);
+    cameraLay->addWidget(camSection);
+
+    auto* savedCamSection = new CollapsibleSection(QStringLiteral("Saved cameras"), false, cameraHost);
+    auto* savedCamL = savedCamSection->contentLayout();
+    savedCamL->addWidget(selectRow(QStringLiteral("Saved cameras"), cameraSelect, savedCamSection->contentWidget()));
+    savedCamL->addWidget(cameraName);
+    savedCamL->addWidget(buttonRow({addCamera, updateCamera, deleteCamera}, savedCamSection->contentWidget()));
+    cameraLay->addWidget(savedCamSection);
     cameraLay->addStretch(1);
 
     auto* exportSize = new Select(exportHost);
-    exportSize->setSize(Select::Size::Sm);
+    exportSize->setSize(Select::Size::Xs);
     exportSize->addItem(QStringLiteral("1920 × 1080"), QStringLiteral("1920x1080"));
     exportSize->addItem(QStringLiteral("2560 × 1440"), QStringLiteral("2560x1440"));
     exportSize->addItem(QStringLiteral("3840 × 2160"), QStringLiteral("3840x2160"));
@@ -728,30 +856,30 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     exportSize->setCurrentIndex(2);
     auto* exportBtn = new Button(QStringLiteral("Export render"), exportHost);
     exportBtn->setSize(Button::Size::Sm);
+    exportBtn->setMaximumWidth(QWIDGETSIZE_MAX);
+    exportBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     auto* transparent = new Switch(exportHost);
     auto* turntableBtn = new Button(QStringLiteral("Export turntable"), exportHost);
     turntableBtn->setVariant(Button::Variant::Outline);
     turntableBtn->setSize(Button::Size::Sm);
-    exportLay->addWidget(selectRow(QStringLiteral("Resolution"), exportSize, exportHost));
-    exportLay->addWidget(switchRow(QStringLiteral("Transparent PNG"), transparent, exportHost));
-    exportLay->addWidget(exportBtn);
-    exportLay->addWidget(turntableBtn);
-    exportLay->addWidget(caption(QStringLiteral("Turntable writes MP4 if ffmpeg is on PATH, otherwise a PNG sequence"), exportHost));
+    turntableBtn->setMaximumWidth(QWIDGETSIZE_MAX);
+    turntableBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    auto* exportSection = new CollapsibleSection(QStringLiteral("Export options"), true, exportHost);
+    auto* expL = exportSection->contentLayout();
+    expL->addWidget(selectRow(QStringLiteral("Resolution"), exportSize, exportSection->contentWidget()));
+    expL->addWidget(switchRow(QStringLiteral("Transparent PNG"), transparent, exportSection->contentWidget()));
+    expL->addWidget(exportBtn);
+    expL->addWidget(turntableBtn);
+    auto* ttHint = caption(QStringLiteral("Turntable writes MP4 if ffmpeg is on PATH, otherwise a PNG sequence"), exportSection->contentWidget());
+    ttHint->setWordWrap(true);
+    expL->addWidget(ttHint);
+    exportLay->addWidget(exportSection);
     exportLay->addStretch(1);
 
-    auto* bg = swatch(viewport_->backgroundColor(), worldHost);
-    auto* modelList = new QWidget(modelHost);
-    auto* modelListLay = new QVBoxLayout(modelList);
-    modelListLay->setContentsMargins(0, 0, 0, 0);
-    modelListLay->setSpacing(2);
-    ModelViewport* viewport = viewport_;
-    std::function<void()> fillModelList;
-    fillModelList = [modelList, modelListLay, viewport]() {
-        clearLayout(modelListLay);
-        const QString current = viewport->modelPath();
-        const std::vector<ModelEntry> entries = listPreviewModels();
-        for (const ModelEntry& entry : entries) {
-            auto* row = new QPushButton(entry.name, modelList);
+    auto buildFileList = [this](QVBoxLayout* lay, const QString& current, const auto& entries, auto setter) {
+        clearLayout(lay);
+        for (const auto& entry : entries) {
+            auto* row = new QPushButton(entry.name, lay->parentWidget());
             row->setCursor(Qt::PointingHandCursor);
             row->setCheckable(true);
             row->setChecked(entry.path.compare(current, Qt::CaseInsensitive) == 0);
@@ -762,94 +890,83 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
             row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             bindListRowStyle(row);
             const QString path = entry.path;
-            QObject::connect(row, &QPushButton::clicked, modelList, [viewport, path, row]() {
+            QObject::connect(row, &QPushButton::clicked, lay->parentWidget(), [this, setter, path, row]() {
                 row->setChecked(true);
                 if (!path.isEmpty()) {
-                    viewport->setModelPath(path);
+                    (viewport_->*setter)(path);
                 }
             });
-            modelListLay->addWidget(row);
+            lay->addWidget(row);
         }
+    };
+
+    auto* bg = swatch(viewport_->backgroundColor(), worldHost);
+    auto* modelSection = new CollapsibleSection(QStringLiteral("Model library"), true, modelHost);
+    auto* modelL = modelSection->contentLayout();
+    auto* modelList = new QWidget(modelSection->contentWidget());
+    auto* modelListLay = new QVBoxLayout(modelList);
+    modelListLay->setContentsMargins(0, 0, 0, 0);
+    modelListLay->setSpacing(2);
+    auto fillModelList = [this, modelListLay, buildFileList]() {
+        buildFileList(modelListLay, viewport_->modelPath(), listPreviewModels(), &ModelViewport::setModelPath);
     };
     fillModelList();
     auto* refreshModels =
-        iconToolButton(Icons::blender(QStringLiteral("file_refresh")), QStringLiteral("Refresh models"), modelHost);
+        iconToolButton(Icons::blender(QStringLiteral("file_refresh")), QStringLiteral("Refresh models"), modelSection->contentWidget());
     auto* importModel =
-        iconToolButton(Icons::blender(QStringLiteral("file_folder")), QStringLiteral("Import model"), modelHost);
-    auto* modelsHint = caption(QStringLiteral("Click a model, import a .glb/.gltf, or drop a file on the viewport"), modelHost);
+        iconToolButton(Icons::blender(QStringLiteral("file_folder")), QStringLiteral("Import model"), modelSection->contentWidget());
+    auto* modelsHint = caption(QStringLiteral("Click a model, import a .glb/.gltf, or drop a file on the viewport"), modelSection->contentWidget());
     modelsHint->setWordWrap(true);
-    modelLay->addWidget(modelList);
-    modelLay->addWidget(modelsHint);
+    modelL->addWidget(modelList);
+    modelL->addWidget(modelsHint);
+    modelLay->addWidget(modelSection);
     modelLay->addStretch(1);
 
-    auto* sceneList = new QWidget(sceneHost);
+    auto* sceneSection = new CollapsibleSection(QStringLiteral("Scene"), true, sceneHost);
+    auto* sceneList = new QWidget(sceneSection->contentWidget());
     auto* sceneListLay = new QVBoxLayout(sceneList);
     sceneListLay->setContentsMargins(0, 0, 0, 0);
-    sceneListLay->setSpacing(1);
-    auto* selectedLabel = caption(QStringLiteral("Click a mesh in the viewport or list"), sceneHost);
+    sceneListLay->setSpacing(0);
+    auto* selectedLabel = caption(QStringLiteral("Click a mesh in the viewport or list"), sceneSection->contentWidget());
     selectedLabel->setWordWrap(true);
-    sceneLay->addWidget(caption(QStringLiteral("Scene"), sceneHost));
-    sceneLay->addWidget(sceneList);
-    sceneLay->addWidget(buttonRow({isolate, clearIso}, sceneHost));
-    sceneLay->addWidget(selectedLabel);
-    sceneLay->addStretch(1);
+    sceneSection->contentLayout()->addWidget(sceneList);
+    sceneSection->contentLayout()->addWidget(buttonRow({isolate, clearIso}, sceneSection->contentWidget()));
+    sceneSection->contentLayout()->addWidget(selectedLabel);
+    sceneLay->addWidget(sceneSection);
 
-    auto* clipSelect = new Select(animHost);
-    clipSelect->setSize(Select::Size::Sm);
+    auto* animSection = new CollapsibleSection(QStringLiteral("Animation"), false, animHost);
+    auto* clipSelect = new Select(animSection->contentWidget());
+    clipSelect->setSize(Select::Size::Xs);
     clipSelect->setPlaceholder(QStringLiteral("No animation"));
-    auto* play = new Switch(animHost);
-    auto* loop = new Switch(animHost);
+    auto* play = new Switch(animSection->contentWidget());
+    auto* loop = new Switch(animSection->contentWidget());
     loop->setChecked(true);
-    auto* timeValue = valueLabel(QStringLiteral("0.00s"), animHost);
-    auto* time = new Slider(animHost);
+    auto* timeValue = valueLabel(QStringLiteral("0.00s"), animSection->contentWidget());
+    auto* time = new Slider(animSection->contentWidget());
     time->setRange(0, 1000);
     time->setValue(0);
-    auto* variantSelect = new Select(animHost);
-    variantSelect->setSize(Select::Size::Sm);
+    auto* variantSelect = new Select(animSection->contentWidget());
+    variantSelect->setSize(Select::Size::Xs);
     variantSelect->setPlaceholder(QStringLiteral("No variants"));
-    auto* morphHost = new QWidget(animHost);
+    auto* morphHost = new QWidget(animSection->contentWidget());
     auto* morphLay = new QVBoxLayout(morphHost);
     morphLay->setContentsMargins(0, 0, 0, 0);
     morphLay->setSpacing(8);
-    animLay->addWidget(caption(QStringLiteral("Animation"), animHost));
-    animLay->addWidget(selectRow(QStringLiteral("Clip"), clipSelect, animHost));
-    animLay->addWidget(switchRow(QStringLiteral("Play"), play, animHost));
-    animLay->addWidget(switchRow(QStringLiteral("Loop"), loop, animHost));
-    animLay->addWidget(sliderRow(QStringLiteral("Time"), time, timeValue, animHost));
-    animLay->addWidget(selectRow(QStringLiteral("Variant"), variantSelect, animHost));
-    animLay->addWidget(caption(QStringLiteral("Morphs"), animHost));
-    animLay->addWidget(morphHost);
-    animLay->addStretch(1);
+    animSection->contentLayout()->addWidget(selectRow(QStringLiteral("Clip"), clipSelect, animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(switchRow(QStringLiteral("Play"), play, animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(switchRow(QStringLiteral("Loop"), loop, animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(sliderRow(QStringLiteral("Time"), time, timeValue, animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(selectRow(QStringLiteral("Variant"), variantSelect, animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(caption(QStringLiteral("Morphs"), animSection->contentWidget()));
+    animSection->contentLayout()->addWidget(morphHost);
+    animLay->addWidget(animSection);
 
     auto* hdriList = new QWidget(hdriHost);
     auto* hdriListLay = new QVBoxLayout(hdriList);
     hdriListLay->setContentsMargins(0, 0, 0, 0);
     hdriListLay->setSpacing(2);
-    std::function<void()> fillHdriList;
-    fillHdriList = [hdriList, hdriListLay, viewport]() {
-        clearLayout(hdriListLay);
-        const QString current = viewport->hdriPath();
-        const std::vector<HdriEntry> entries = listHdriFiles();
-        for (const HdriEntry& entry : entries) {
-            auto* row = new QPushButton(entry.name, hdriList);
-            row->setCursor(Qt::PointingHandCursor);
-            row->setCheckable(true);
-            row->setChecked(entry.path.compare(current, Qt::CaseInsensitive) == 0);
-            row->setFlat(true);
-            row->setFocusPolicy(Qt::NoFocus);
-            row->setFont(Fonts::regular(9.5));
-            row->setFixedHeight(32);
-            row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            bindListRowStyle(row);
-            const QString path = entry.path;
-            QObject::connect(row, &QPushButton::clicked, hdriList, [viewport, path, row]() {
-                row->setChecked(true);
-                if (!path.isEmpty()) {
-                    viewport->setHdriPath(path);
-                }
-            });
-            hdriListLay->addWidget(row);
-        }
+    auto fillHdriList = [this, hdriListLay, buildFileList]() {
+        buildFileList(hdriListLay, viewport_->hdriPath(), listHdriFiles(), &ModelViewport::setHdriPath);
     };
     fillHdriList();
     auto* refreshHdris =
@@ -859,23 +976,25 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* showHdri = new Switch(hdriHost);
     auto* hdriHint = caption(QStringLiteral("Click an HDRI, import .exr/.hdr, or drop it on the viewport"), hdriHost);
     hdriHint->setWordWrap(true);
-    hdriLay->addWidget(caption(QStringLiteral("HDRI"), hdriHost));
-    hdriLay->addWidget(switchRow(QStringLiteral("HDRI visible"), showHdri, hdriHost));
-    hdriLay->addWidget(hdriList);
-    hdriLay->addWidget(hdriHint);
-    hdriLay->addStretch(1);
+    auto* envSection = new CollapsibleSection(QStringLiteral("Environment"), true, hdriHost);
+    auto* envL = envSection->contentLayout();
+    envL->addWidget(switchRow(QStringLiteral("HDRI visible"), showHdri, envSection->contentWidget()));
+    envL->addWidget(hdriList);
+    envL->addWidget(hdriHint);
+    hdriLay->addWidget(envSection);
 
-    worldLay->addWidget(caption(QStringLiteral("Studio"), worldHost));
-    worldLay->addWidget(switchRow(QStringLiteral("Show floor grid"), grid, worldHost));
-    worldLay->addWidget(switchRow(QStringLiteral("Show axes"), axes, worldHost));
-    auto* floor = new Switch(worldHost);
+    auto* studioSection = new CollapsibleSection(QStringLiteral("Studio"), false, worldHost);
+    auto* studioL = studioSection->contentLayout();
+    auto* floor = new Switch(studioSection->contentWidget());
     floor->setChecked(false);
-    auto* clay = new Switch(worldHost);
-    worldLay->addWidget(switchRow(QStringLiteral("Shadow catcher"), floor, worldHost));
-    worldLay->addWidget(switchRow(QStringLiteral("Clay mode"), clay, worldHost));
-    worldLay->addWidget(caption(QStringLiteral("Viewport background"), worldHost));
-    worldLay->addWidget(bg, 0, Qt::AlignLeft);
-    worldLay->addStretch(1);
+    auto* clay = new Switch(studioSection->contentWidget());
+    studioL->addWidget(switchRow(QStringLiteral("Show floor grid"), grid, studioSection->contentWidget()));
+    studioL->addWidget(switchRow(QStringLiteral("Show axes"), axes, studioSection->contentWidget()));
+    studioL->addWidget(switchRow(QStringLiteral("Shadow catcher"), floor, studioSection->contentWidget()));
+    studioL->addWidget(switchRow(QStringLiteral("Clay mode"), clay, studioSection->contentWidget()));
+    studioL->addWidget(caption(QStringLiteral("Viewport background"), studioSection->contentWidget()));
+    studioL->addWidget(bg, 0, Qt::AlignLeft);
+    worldLay->addWidget(studioSection);
 
     auto* keyOn = new Switch(lightsHost);
     keyOn->setChecked(true);
@@ -932,39 +1051,40 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* keySwatch = swatch(viewport_->keyColor(), lightsHost);
     auto* fillSwatch = swatch(viewport_->fillColor(), lightsHost);
     auto* rimSwatch = swatch(viewport_->rimColor(), lightsHost);
-    lightsLay->addWidget(caption(QStringLiteral("Lights"), lightsHost));
-    auto* sceneLightsOn = new Switch(lightsHost);
+    auto* lightsSection = new CollapsibleSection(QStringLiteral("Studio lights"), false, lightsHost);
+    auto* lightsL = lightsSection->contentLayout();
+    auto* sceneLightsOn = new Switch(lightsSection->contentWidget());
     sceneLightsOn->setChecked(true);
-    lightsLay->addWidget(switchRow(QStringLiteral("Scene lights"), sceneLightsOn, lightsHost));
-    lightsLay->addWidget(switchRow(QStringLiteral("Key"), keyOn, lightsHost));
-    lightsLay->addWidget(switchRow(QStringLiteral("Fill"), fillOn, lightsHost));
-    lightsLay->addWidget(switchRow(QStringLiteral("Rim"), rimOn, lightsHost));
-    lightsLay->addWidget(switchRow(QStringLiteral("Environment IBL"), envOn, lightsHost));
-    lightsLay->addWidget(switchRow(QStringLiteral("Show lights"), lightsVis, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Key intensity"), keyInt, keyIntValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Fill intensity"), fillInt, fillIntValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Rim intensity"), rimInt, rimIntValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("IBL intensity"), envInt, envIntValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("IBL rotation"), envRot, envRotValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Key yaw"), keyYaw, keyYawValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Key pitch"), keyPitch, keyPitchValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Fill yaw"), fillYaw, fillYawValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Fill pitch"), fillPitch, fillPitchValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Rim yaw"), rimYaw, rimYawValue, lightsHost));
-    lightsLay->addWidget(sliderRow(QStringLiteral("Rim pitch"), rimPitch, rimPitchValue, lightsHost));
-    lightsLay->addWidget(caption(QStringLiteral("Key / Fill / Rim color"), lightsHost));
-    auto* colorRow = new QWidget(lightsHost);
+    lightsL->addWidget(switchRow(QStringLiteral("Scene lights"), sceneLightsOn, lightsSection->contentWidget()));
+    lightsL->addWidget(switchRow(QStringLiteral("Key"), keyOn, lightsSection->contentWidget()));
+    lightsL->addWidget(switchRow(QStringLiteral("Fill"), fillOn, lightsSection->contentWidget()));
+    lightsL->addWidget(switchRow(QStringLiteral("Rim"), rimOn, lightsSection->contentWidget()));
+    lightsL->addWidget(switchRow(QStringLiteral("Environment IBL"), envOn, lightsSection->contentWidget()));
+    lightsL->addWidget(switchRow(QStringLiteral("Show lights"), lightsVis, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Key intensity"), keyInt, keyIntValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Fill intensity"), fillInt, fillIntValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Rim intensity"), rimInt, rimIntValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("IBL intensity"), envInt, envIntValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("IBL rotation"), envRot, envRotValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Key yaw"), keyYaw, keyYawValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Key pitch"), keyPitch, keyPitchValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Fill yaw"), fillYaw, fillYawValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Fill pitch"), fillPitch, fillPitchValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Rim yaw"), rimYaw, rimYawValue, lightsSection->contentWidget()));
+    lightsL->addWidget(sliderRow(QStringLiteral("Rim pitch"), rimPitch, rimPitchValue, lightsSection->contentWidget()));
+    lightsL->addWidget(caption(QStringLiteral("Key / Fill / Rim color"), lightsSection->contentWidget()));
+    auto* colorRow = new QWidget(lightsSection->contentWidget());
     auto* colorLayout = new QHBoxLayout(colorRow);
     colorLayout->setContentsMargins(0, 0, 0, 0);
     colorLayout->addWidget(keySwatch);
     colorLayout->addWidget(fillSwatch);
     colorLayout->addWidget(rimSwatch);
     colorLayout->addStretch(1);
-    lightsLay->addWidget(colorRow);
-    lightsLay->addStretch(1);
+    lightsL->addWidget(colorRow);
+    lightsLay->addWidget(lightsSection);
 
     auto* presetSelect = new Select(presetsHost);
-    presetSelect->setSize(Select::Size::Sm);
+    presetSelect->setSize(Select::Size::Xs);
     presetSelect->setPlaceholder(QStringLiteral("No preset"));
     auto* addPreset = new Button(QStringLiteral("Add"), presetsHost);
     addPreset->setVariant(Button::Variant::Outline);
@@ -980,18 +1100,20 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* presetName = new Input(presetsHost);
     presetName->setPlaceholderText(QStringLiteral("Preset name"));
     auto* lookSelect = new Select(presetsHost);
-    lookSelect->setSize(Select::Size::Sm);
+    lookSelect->setSize(Select::Size::Xs);
     lookSelect->addItem(QStringLiteral("Showroom"), QStringLiteral("0"));
     lookSelect->addItem(QStringLiteral("Soft daylight"), QStringLiteral("1"));
     lookSelect->addItem(QStringLiteral("Overcast"), QStringLiteral("2"));
     lookSelect->addItem(QStringLiteral("Night"), QStringLiteral("3"));
     lookSelect->addItem(QStringLiteral("Clay studio"), QStringLiteral("4"));
-    presetsLay->addWidget(caption(QStringLiteral("Looks"), presetsHost));
-    presetsLay->addWidget(selectRow(QStringLiteral("Look"), lookSelect, presetsHost));
-    presetsLay->addWidget(selectRow(QStringLiteral("Lookdev preset"), presetSelect, presetsHost));
-    presetsLay->addWidget(presetName);
-    presetsLay->addWidget(buttonRow({addPreset, updatePreset, deletePreset}, presetsHost));
-    presetsLay->addWidget(presetHint);
+    auto* looksSection = new CollapsibleSection(QStringLiteral("Looks"), false, presetsHost);
+    auto* looksL = looksSection->contentLayout();
+    looksL->addWidget(selectRow(QStringLiteral("Look"), lookSelect, looksSection->contentWidget()));
+    looksL->addWidget(selectRow(QStringLiteral("Lookdev preset"), presetSelect, looksSection->contentWidget()));
+    looksL->addWidget(presetName);
+    looksL->addWidget(buttonRow({addPreset, updatePreset, deletePreset}, looksSection->contentWidget()));
+    looksL->addWidget(presetHint);
+    presetsLay->addWidget(looksSection);
     presetsLay->addStretch(1);
 
     auto* gpu = new QLabel(QStringLiteral("Detecting GPU…"), graphicsHost);
@@ -1001,7 +1123,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         return QStringLiteral("color: %1;").arg(Theme::css(Theme::mutedForeground()));
     });
     auto* quality = new Select(graphicsHost);
-    quality->setSize(Select::Size::Sm);
+    quality->setSize(Select::Size::Xs);
     quality->addItem(QStringLiteral("Low"), QStringLiteral("low"));
     quality->addItem(QStringLiteral("Medium"), QStringLiteral("medium"));
     quality->addItem(QStringLiteral("High"), QStringLiteral("high"));
@@ -1009,7 +1131,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     quality->addItem(QStringLiteral("Extreme"), QStringLiteral("extreme"));
     quality->setCurrentIndex(3);
     auto* aa = new Select(graphicsHost);
-    aa->setSize(Select::Size::Sm);
+    aa->setSize(Select::Size::Xs);
     aa->addItem(QStringLiteral("Off"), QStringLiteral("0"));
     aa->addItem(QStringLiteral("2x MSAA"), QStringLiteral("2"));
     aa->addItem(QStringLiteral("4x MSAA"), QStringLiteral("4"));
@@ -1017,21 +1139,21 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     aa->addItem(QStringLiteral("16x MSAA"), QStringLiteral("16"));
     aa->setCurrentIndex(3);
     auto* shadowMap = new Select(graphicsHost);
-    shadowMap->setSize(Select::Size::Sm);
+    shadowMap->setSize(Select::Size::Xs);
     shadowMap->addItem(QStringLiteral("1024"), QStringLiteral("1024"));
     shadowMap->addItem(QStringLiteral("2048"), QStringLiteral("2048"));
     shadowMap->addItem(QStringLiteral("4096"), QStringLiteral("4096"));
     shadowMap->addItem(QStringLiteral("8192"), QStringLiteral("8192"));
     shadowMap->setCurrentIndex(2);
     auto* iblRes = new Select(graphicsHost);
-    iblRes->setSize(Select::Size::Sm);
+    iblRes->setSize(Select::Size::Xs);
     iblRes->addItem(QStringLiteral("128"), QStringLiteral("128"));
     iblRes->addItem(QStringLiteral("256"), QStringLiteral("256"));
     iblRes->addItem(QStringLiteral("512"), QStringLiteral("512"));
     iblRes->addItem(QStringLiteral("1024"), QStringLiteral("1024"));
     iblRes->setCurrentIndex(2);
     auto* aniso = new Select(graphicsHost);
-    aniso->setSize(Select::Size::Sm);
+    aniso->setSize(Select::Size::Xs);
     aniso->addItem(QStringLiteral("1x"), QStringLiteral("1"));
     aniso->addItem(QStringLiteral("4x"), QStringLiteral("4"));
     aniso->addItem(QStringLiteral("8x"), QStringLiteral("8"));
@@ -1053,20 +1175,21 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     ssaoOn->setChecked(true);
     auto* bloomOn = new Switch(graphicsHost);
     bloomOn->setChecked(true);
-    graphicsLay->addWidget(caption(QStringLiteral("Graphics"), graphicsHost));
-    graphicsLay->addWidget(caption(QStringLiteral("GPU"), graphicsHost));
-    graphicsLay->addWidget(gpu);
-    graphicsLay->addWidget(selectRow(QStringLiteral("Render quality"), quality, graphicsHost));
-    graphicsLay->addWidget(selectRow(QStringLiteral("Antialiasing"), aa, graphicsHost));
-    graphicsLay->addWidget(selectRow(QStringLiteral("Shadow map"), shadowMap, graphicsHost));
-    graphicsLay->addWidget(selectRow(QStringLiteral("IBL resolution"), iblRes, graphicsHost));
-    graphicsLay->addWidget(selectRow(QStringLiteral("Anisotropic filter"), aniso, graphicsHost));
-    graphicsLay->addWidget(sliderRow(QStringLiteral("Resolution scale"), scale, scaleValue, graphicsHost));
-    graphicsLay->addWidget(sliderRow(QStringLiteral("Bloom passes"), bloomPass, bloomPassValue, graphicsHost));
-    graphicsLay->addWidget(switchRow(QStringLiteral("VSync"), vsync, graphicsHost));
-    graphicsLay->addWidget(switchRow(QStringLiteral("Shadows"), shadowsOn, graphicsHost));
-    graphicsLay->addWidget(switchRow(QStringLiteral("SSAO"), ssaoOn, graphicsHost));
-    graphicsLay->addWidget(switchRow(QStringLiteral("Bloom"), bloomOn, graphicsHost));
+    auto* gpuSection = new CollapsibleSection(QStringLiteral("GPU rendering"), true, graphicsHost);
+    auto* gpuL = gpuSection->contentLayout();
+    gpuL->addWidget(gpu);
+    gpuL->addWidget(selectRow(QStringLiteral("Render quality"), quality, gpuSection->contentWidget()));
+    gpuL->addWidget(selectRow(QStringLiteral("Antialiasing"), aa, gpuSection->contentWidget()));
+    gpuL->addWidget(selectRow(QStringLiteral("Shadow map"), shadowMap, gpuSection->contentWidget()));
+    gpuL->addWidget(selectRow(QStringLiteral("IBL resolution"), iblRes, gpuSection->contentWidget()));
+    gpuL->addWidget(selectRow(QStringLiteral("Anisotropic filter"), aniso, gpuSection->contentWidget()));
+    gpuL->addWidget(sliderRow(QStringLiteral("Resolution scale"), scale, scaleValue, gpuSection->contentWidget()));
+    gpuL->addWidget(sliderRow(QStringLiteral("Bloom passes"), bloomPass, bloomPassValue, gpuSection->contentWidget()));
+    gpuL->addWidget(switchRow(QStringLiteral("VSync"), vsync, gpuSection->contentWidget()));
+    gpuL->addWidget(switchRow(QStringLiteral("Shadows"), shadowsOn, gpuSection->contentWidget()));
+    gpuL->addWidget(switchRow(QStringLiteral("SSAO"), ssaoOn, gpuSection->contentWidget()));
+    gpuL->addWidget(switchRow(QStringLiteral("Bloom"), bloomOn, gpuSection->contentWidget()));
+    graphicsLay->addWidget(gpuSection);
 
     auto* normalsOn = new Switch(materialsHost);
     normalsOn->setChecked(true);
@@ -1102,18 +1225,23 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* shadowSoft = new Slider(materialsHost);
     shadowSoft->setRange(15, 400);
     shadowSoft->setValue(100);
-    materialsLay->addWidget(caption(QStringLiteral("Shading"), materialsHost));
-    materialsLay->addWidget(switchRow(QStringLiteral("Textures"), textures, materialsHost));
-    materialsLay->addWidget(switchRow(QStringLiteral("Wireframe"), wire, materialsHost));
-    materialsLay->addWidget(switchRow(QStringLiteral("Normal maps"), normalsOn, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Normal intensity"), nrm, nrmValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Roughness"), rough, roughValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Metallic"), metal, metalValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Ambient occlusion"), aoMul, aoMulValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Clearcoat"), coat, coatValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Direct light"), direct, directValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Shadow strength"), shadowStr, shadowStrValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Shadow softness"), shadowSoft, shadowSoftValue, materialsHost));
+    auto* shadeSection = new CollapsibleSection(QStringLiteral("Shading"), false, materialsHost);
+    auto* shadeL = shadeSection->contentLayout();
+    shadeL->addWidget(switchRow(QStringLiteral("Textures"), textures, materialsHost));
+    shadeL->addWidget(switchRow(QStringLiteral("Wireframe"), wire, materialsHost));
+    shadeL->addWidget(switchRow(QStringLiteral("Normal maps"), normalsOn, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Normal intensity"), nrm, nrmValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Roughness"), rough, roughValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Metallic"), metal, metalValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Ambient occlusion"), aoMul, aoMulValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Clearcoat"), coat, coatValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Direct light"), direct, directValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Shadow strength"), shadowStr, shadowStrValue, materialsHost));
+    shadeL->addWidget(sliderRow(QStringLiteral("Shadow softness"), shadowSoft, shadowSoftValue, materialsHost));
+    materialsLay->addWidget(shadeSection);
+
+    auto* matSection = new CollapsibleSection(QStringLiteral("Selected material"), true, materialsHost);
+    auto* matL = matSection->contentLayout();
     auto* inspectName = caption(QStringLiteral("Select a part to inspect"), materialsHost);
     inspectName->setWordWrap(true);
     auto* matColor = swatch(QColor(220, 220, 220), materialsHost);
@@ -1135,19 +1263,19 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     selEmit->setRange(0, 400);
     selEmit->setValue(100);
     auto* selUnlit = new Switch(materialsHost);
-    materialsLay->addWidget(caption(QStringLiteral("Selected material"), materialsHost));
-    materialsLay->addWidget(inspectName);
-    materialsLay->addWidget(matColor, 0, Qt::AlignLeft);
-    materialsLay->addWidget(sliderRow(QStringLiteral("Metallic"), selMetal, selMetalValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Roughness"), selRough, selRoughValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Transmission"), selTrans, selTransValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Sheen"), selSheen, selSheenValue, materialsHost));
-    materialsLay->addWidget(sliderRow(QStringLiteral("Emissive"), selEmit, selEmitValue, materialsHost));
-    materialsLay->addWidget(switchRow(QStringLiteral("Unlit"), selUnlit, materialsHost));
+    matL->addWidget(inspectName);
+    matL->addWidget(matColor, 0, Qt::AlignLeft);
+    matL->addWidget(sliderRow(QStringLiteral("Metallic"), selMetal, selMetalValue, materialsHost));
+    matL->addWidget(sliderRow(QStringLiteral("Roughness"), selRough, selRoughValue, materialsHost));
+    matL->addWidget(sliderRow(QStringLiteral("Transmission"), selTrans, selTransValue, materialsHost));
+    matL->addWidget(sliderRow(QStringLiteral("Sheen"), selSheen, selSheenValue, materialsHost));
+    matL->addWidget(sliderRow(QStringLiteral("Emissive"), selEmit, selEmitValue, materialsHost));
+    matL->addWidget(switchRow(QStringLiteral("Unlit"), selUnlit, materialsHost));
+    materialsLay->addWidget(matSection);
     materialsLay->addStretch(1);
 
     auto* tonemap = new Select(postHost);
-    tonemap->setSize(Select::Size::Sm);
+    tonemap->setSize(Select::Size::Xs);
     tonemap->addItem(QStringLiteral("ACES"), QStringLiteral("aces"));
     tonemap->addItem(QStringLiteral("Reinhard"), QStringLiteral("reinhard"));
     tonemap->addItem(QStringLiteral("Filmic"), QStringLiteral("filmic"));
@@ -1200,24 +1328,26 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     auto* ca = new Slider(postHost);
     ca->setRange(0, 100);
     ca->setValue(0);
-    postLay->addWidget(caption(QStringLiteral("Post FX"), postHost));
-    postLay->addWidget(selectRow(QStringLiteral("Tone mapping"), tonemap, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Exposure"), exposure, exposureValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Bloom"), bloom, bloomValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Bloom threshold"), bloomTh, bloomThValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Vignette"), vig, vigValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("SSAO"), ssao, ssaoValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Contrast"), contrast, contrastValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Saturation"), sat, satValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Temperature"), temp, tempValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Tint"), tint, tintValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Sharpen"), sharp, sharpValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Film grain"), grain, grainValue, postHost));
-    postLay->addWidget(sliderRow(QStringLiteral("Chromatic aberration"), ca, caValue, postHost));
+    auto* postSection = new CollapsibleSection(QStringLiteral("Post FX"), true, postHost);
+    auto* postL = postSection->contentLayout();
+    postL->addWidget(selectRow(QStringLiteral("Tone mapping"), tonemap, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Exposure"), exposure, exposureValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Bloom"), bloom, bloomValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Bloom threshold"), bloomTh, bloomThValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Vignette"), vig, vigValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("SSAO"), ssao, ssaoValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Contrast"), contrast, contrastValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Saturation"), sat, satValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Temperature"), temp, tempValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Tint"), tint, tintValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Sharpen"), sharp, sharpValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Film grain"), grain, grainValue, postSection->contentWidget()));
+    postL->addWidget(sliderRow(QStringLiteral("Chromatic aberration"), ca, caValue, postSection->contentWidget()));
+    postLay->addWidget(postSection);
     postLay->addStretch(1);
 
     auto* debugView = new Select(debugHost);
-    debugView->setSize(Select::Size::Sm);
+    debugView->setSize(Select::Size::Xs);
     debugView->addItem(QStringLiteral("Lit"), QStringLiteral("0"));
     debugView->addItem(QStringLiteral("Albedo"), QStringLiteral("1"));
     debugView->addItem(QStringLiteral("World normal"), QStringLiteral("2"));
@@ -1236,19 +1366,22 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     Theme::bindStyle(debugHint, []() {
         return QStringLiteral("color: %1;").arg(Theme::css(Theme::mutedForeground()));
     });
-    debugLay->addWidget(selectRow(QStringLiteral("Buffer"), debugView, debugHost));
-    debugLay->addWidget(debugHint);
-    auto* extHint = caption(QStringLiteral("Unsupported glTF extensions appear in the status bar as ignored."), debugHost);
+    auto* dbgSection = new CollapsibleSection(QStringLiteral("Debug"), true, debugHost);
+    auto* dbgL = dbgSection->contentLayout();
+    dbgL->addWidget(selectRow(QStringLiteral("Buffer"), debugView, dbgSection->contentWidget()));
+    dbgL->addWidget(debugHint);
+    auto* extHint = caption(QStringLiteral("Unsupported glTF extensions appear in the status bar as ignored."), dbgSection->contentWidget());
     extHint->setWordWrap(true);
-    debugLay->addWidget(extHint);
+    dbgL->addWidget(extHint);
+    debugLay->addWidget(dbgSection);
     debugLay->addStretch(1);
 
     const int pageModel = sheet->addPage(QStringLiteral("Model"), modelPage);
     const int pageLook = sheet->addPage(QStringLiteral("Look"), lookPage);
     const int pageInspect = sheet->addPage(QStringLiteral("Inspect"), inspectPage);
     const int pageCamera = sheet->addPage(QStringLiteral("Camera"), cameraPage);
-    const int pageGraphics = sheet->addPage(QStringLiteral("Graphics"), graphicsPage);
     const int pageExport = sheet->addPage(QStringLiteral("Export"), exportPage);
+    const int pageGraphics = sheet->addPage(QStringLiteral("Graphics"), graphicsPage);
     const int pageDebug = sheet->addPage(QStringLiteral("Debug"), debugPage);
     sheet->setPageActions(pageModel, {refreshModels, importModel});
     sheet->setPageActions(pageLook, {refreshHdris, importHdri});
@@ -1303,10 +1436,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     root->addWidget(footer);
 
     auto paintSwatch = [bg](const QColor& color) {
-        Theme::bindStyle(bg, [color]() {
-            return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                .arg(color.name(), Theme::css(Theme::border()));
-        });
+        bindSwatchStyle(bg, color);
     };
 
     auto savedCameras = std::make_shared<QJsonArray>(loadJsonArray(QStringLiteral("cameras")));
@@ -1370,6 +1500,8 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         viewport_->setFov(static_cast<float>(value));
     });
     connect(autoRotate, &Switch::toggled, viewport_, &ModelViewport::setAutoRotate);
+    connect(auto360, &Switch::toggled, viewport_, &ModelViewport::setAuto360);
+    connect(floating, &Switch::toggled, viewport_, [this](bool e) { viewport_->setFloating(e); });
     connect(grid, &Switch::toggled, viewport_, &ModelViewport::setGridVisible);
     connect(axes, &Switch::toggled, viewport_, &ModelViewport::setAxesVisible);
     connect(textures, &Switch::toggled, viewport_, &ModelViewport::setTexturesEnabled);
@@ -1388,7 +1520,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
     connect(floor, &Switch::toggled, viewport_, &ModelViewport::setFloorCatcher);
     connect(clay, &Switch::toggled, viewport_, &ModelViewport::setClayMode);
     connect(dofOn, &Switch::toggled, viewport_, &ModelViewport::setDofEnabled);
-    connect(transparent, &Switch::toggled, viewport_, &ModelViewport::setTransparentBackground);
+    connect(transparent, &Switch::toggled, viewport_, &ModelViewport::setExportTransparentBackground);
     connect(lookSelect, &Select::currentIndexChanged, viewport_, &ModelViewport::applyLook);
     connect(sceneCameras, &Select::currentIndexChanged, viewport_, &ModelViewport::setSceneCameraIndex);
     connect(play, &Switch::toggled, viewport_, &ModelViewport::setAnimationPlaying);
@@ -1550,10 +1682,7 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
             const QColor next = QColorDialog::getColor((viewport_->*getter)(), this, QStringLiteral("Light color"));
             if (next.isValid()) {
                 (viewport_->*setter)(next);
-                Theme::bindStyle(button, [next]() {
-                    return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                        .arg(next.name(), Theme::css(Theme::border()));
-                });
+                bindSwatchStyle(button, next);
             }
         });
     };
@@ -1680,47 +1809,34 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         fovValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->fov())));
     });
     connect(viewport_, &ModelViewport::graphicsChanged, this, [=]() {
-        const QSignalBlocker bSky(showHdri);
-        const QSignalBlocker bQuality(quality);
-        const QSignalBlocker bAa(aa);
-        const QSignalBlocker bShadow(shadowMap);
-        const QSignalBlocker bIbl(iblRes);
-        const QSignalBlocker bAniso(aniso);
-        const QSignalBlocker bScale(scale);
-        const QSignalBlocker bBloomPass(bloomPass);
-        const QSignalBlocker bVsync(vsync);
-        const QSignalBlocker bGrid(grid);
-        const QSignalBlocker bAxes(axes);
-        const QSignalBlocker bTex(textures);
-        const QSignalBlocker bExposure(exposure);
-        const QSignalBlocker bBloom(bloom);
-        const QSignalBlocker bVig(vig);
-        const QSignalBlocker bEnv(envInt);
-        const QSignalBlocker bKey(keyInt);
-        const QSignalBlocker bFill(fillInt);
-        const QSignalBlocker bRim(rimInt);
-        const QSignalBlocker bKeyYaw(keyYaw);
-        const QSignalBlocker bKeyPitch(keyPitch);
-        const QSignalBlocker bFillYaw(fillYaw);
-        const QSignalBlocker bFillPitch(fillPitch);
-        const QSignalBlocker bRimYaw(rimYaw);
-        const QSignalBlocker bRimPitch(rimPitch);
+        auto blockSet = [](auto* c, auto v) {
+            const QSignalBlocker b(c);
+            c->setValue(v);
+        };
+        auto blockSetToggled = [](auto* c, bool v) {
+            const QSignalBlocker b(c);
+            c->setChecked(v);
+        };
+        auto blockSetIndex = [](auto* c, int v) {
+            const QSignalBlocker b(c);
+            c->setCurrentIndex(v);
+        };
 
         switch (viewport_->quality()) {
             case ModelViewport::Quality::Low:
-                quality->setCurrentIndex(0);
+                blockSetIndex(quality, 0);
                 break;
             case ModelViewport::Quality::Medium:
-                quality->setCurrentIndex(1);
+                blockSetIndex(quality, 1);
                 break;
             case ModelViewport::Quality::High:
-                quality->setCurrentIndex(2);
+                blockSetIndex(quality, 2);
                 break;
             case ModelViewport::Quality::Ultra:
-                quality->setCurrentIndex(3);
+                blockSetIndex(quality, 3);
                 break;
             case ModelViewport::Quality::Extreme:
-                quality->setCurrentIndex(4);
+                blockSetIndex(quality, 4);
                 break;
         }
         int aaIndex = 0;
@@ -1733,61 +1849,52 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         } else if (viewport_->msaaSamples() >= 2) {
             aaIndex = 1;
         }
-        aa->setCurrentIndex(aaIndex);
+        blockSetIndex(aa, aaIndex);
         const int shadow = viewport_->shadowSize();
-        shadowMap->setCurrentIndex(shadow >= 8192 ? 3 : shadow >= 4096 ? 2 : shadow >= 2048 ? 1 : 0);
+        blockSetIndex(shadowMap, shadow >= 8192 ? 3 : shadow >= 4096 ? 2 : shadow >= 2048 ? 1 : 0);
         const int ibl = viewport_->iblSize();
-        iblRes->setCurrentIndex(ibl >= 1024 ? 3 : ibl >= 512 ? 2 : ibl >= 256 ? 1 : 0);
+        blockSetIndex(iblRes, ibl >= 1024 ? 3 : ibl >= 512 ? 2 : ibl >= 256 ? 1 : 0);
         const float af = viewport_->anisotropy();
-        aniso->setCurrentIndex(af >= 15.5f ? 3 : af >= 7.5f ? 2 : af >= 3.5f ? 1 : 0);
-        bloomPass->setValue(viewport_->bloomPasses());
+        blockSetIndex(aniso, af >= 15.5f ? 3 : af >= 7.5f ? 2 : af >= 3.5f ? 1 : 0);
+        blockSet(bloomPass, viewport_->bloomPasses());
         bloomPassValue->setText(QString::number(viewport_->bloomPasses()));
-        grid->setChecked(viewport_->gridVisible());
-        axes->setChecked(viewport_->axesVisible());
-        textures->setChecked(viewport_->texturesEnabled());
+        blockSetToggled(grid, viewport_->gridVisible());
+        blockSetToggled(axes, viewport_->axesVisible());
+        blockSetToggled(textures, viewport_->texturesEnabled());
         const int scalePct = qRound(viewport_->renderScale() * 100.0f);
-        scale->setValue(scalePct);
+        blockSet(scale, scalePct);
         scaleValue->setText(QStringLiteral("%1%").arg(scalePct));
-        vsync->setChecked(viewport_->vsync());
-        exposure->setValue(qRound(viewport_->exposure() * 100.0f));
+        blockSetToggled(vsync, viewport_->vsync());
+        blockSet(exposure, qRound(viewport_->exposure() * 100.0f));
         exposureValue->setText(QString::number(viewport_->exposure(), 'f', 2));
-        bloom->setValue(qRound(viewport_->bloom() * 100.0f));
+        blockSet(bloom, qRound(viewport_->bloom() * 100.0f));
         bloomValue->setText(QString::number(viewport_->bloom(), 'f', 2));
-        vig->setValue(qRound(viewport_->vignette() * 100.0f));
+        blockSet(vig, qRound(viewport_->vignette() * 100.0f));
         vigValue->setText(QString::number(viewport_->vignette(), 'f', 2));
-        envInt->setValue(qRound(viewport_->envIntensity() * 100.0f));
+        blockSet(envInt, qRound(viewport_->envIntensity() * 100.0f));
         envIntValue->setText(QString::number(viewport_->envIntensity(), 'f', 2));
-        keyInt->setValue(qRound(viewport_->keyIntensity() * 100.0f));
+        blockSet(keyInt, qRound(viewport_->keyIntensity() * 100.0f));
         keyIntValue->setText(QString::number(viewport_->keyIntensity(), 'f', 2));
-        fillInt->setValue(qRound(viewport_->fillIntensity() * 100.0f));
+        blockSet(fillInt, qRound(viewport_->fillIntensity() * 100.0f));
         fillIntValue->setText(QString::number(viewport_->fillIntensity(), 'f', 2));
-        rimInt->setValue(qRound(viewport_->rimIntensity() * 100.0f));
+        blockSet(rimInt, qRound(viewport_->rimIntensity() * 100.0f));
         rimIntValue->setText(QString::number(viewport_->rimIntensity(), 'f', 2));
-        keyYaw->setValue(qRound(viewport_->keyYaw()));
+        blockSet(keyYaw, qRound(viewport_->keyYaw()));
         keyYawValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->keyYaw())));
-        keyPitch->setValue(qRound(viewport_->keyPitch()));
+        blockSet(keyPitch, qRound(viewport_->keyPitch()));
         keyPitchValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->keyPitch())));
-        fillYaw->setValue(qRound(viewport_->fillYaw()));
+        blockSet(fillYaw, qRound(viewport_->fillYaw()));
         fillYawValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->fillYaw())));
-        fillPitch->setValue(qRound(viewport_->fillPitch()));
+        blockSet(fillPitch, qRound(viewport_->fillPitch()));
         fillPitchValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->fillPitch())));
-        rimYaw->setValue(qRound(viewport_->rimYaw()));
+        blockSet(rimYaw, qRound(viewport_->rimYaw()));
         rimYawValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->rimYaw())));
-        rimPitch->setValue(qRound(viewport_->rimPitch()));
+        blockSet(rimPitch, qRound(viewport_->rimPitch()));
         rimPitchValue->setText(QStringLiteral("%1°").arg(qRound(viewport_->rimPitch())));
         paintSwatch(viewport_->backgroundColor());
-        Theme::bindStyle(keySwatch, [c = viewport_->keyColor()]() {
-            return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                .arg(c.name(), Theme::css(Theme::border()));
-        });
-        Theme::bindStyle(fillSwatch, [c = viewport_->fillColor()]() {
-            return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                .arg(c.name(), Theme::css(Theme::border()));
-        });
-        Theme::bindStyle(rimSwatch, [c = viewport_->rimColor()]() {
-            return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                .arg(c.name(), Theme::css(Theme::border()));
-        });
+        bindSwatchStyle(keySwatch, viewport_->keyColor());
+        bindSwatchStyle(fillSwatch, viewport_->fillColor());
+        bindSwatchStyle(rimSwatch, viewport_->rimColor());
         if (!viewport_->gpuDetails().isEmpty()) {
             gpu->setText(viewport_->gpuDetails());
         } else if (!viewport_->gpuName().isEmpty()) {
@@ -1795,6 +1902,9 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         }
         showHdri->setChecked(viewport_->skyVisible());
         floor->setChecked(viewport_->floorCatcher());
+        autoRotate->setChecked(viewport_->autoRotate());
+        auto360->setChecked(viewport_->auto360());
+        floating->setChecked(viewport_->floating());
         clay->setChecked(viewport_->clayMode());
         fillModelList();
         fillHdriList();
@@ -1814,62 +1924,93 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
             row->setFocusPolicy(Qt::NoFocus);
             row->setFont(Fonts::regular(9.0));
             row->setFixedHeight(28);
+            row->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             bindListRowStyle(row);
             const int node = item.node;
             const int part = item.part;
-            QObject::connect(row, &QPushButton::clicked, sceneList, [viewport, node, part]() {
+            QObject::connect(row, &QPushButton::clicked, sceneList, [this, node, part]() {
                 if (part >= 0) {
-                    viewport->setSelectedPart(part);
+                    viewport_->setSelectedPart(part);
                 } else {
-                    viewport->setSelectedNode(node);
+                    viewport_->setSelectedNode(node);
                 }
             });
+
+            row->installEventFilter(new HoverFilter(row, [this, node, part](bool hovered) {
+                if (hovered) {
+                    if (part >= 0) viewport_->setHoveredPart(part);
+                    else viewport_->setHoveredNode(node);
+                } else {
+                    if (part >= 0 && viewport_->hoveredPart() == part) viewport_->setHoveredPart(-1);
+                    else if (viewport_->hoveredNode() == node) viewport_->setHoveredNode(-1);
+                }
+            }));
+
             sceneListLay->addWidget(row);
         }
     };
     auto fillClips = [=]() {
         const QSignalBlocker blocker(clipSelect);
         clipSelect->clearItems();
-        for (const QString& name : viewport_->animationNames()) {
+        const QStringList anims = viewport_->animationNames();
+        for (const QString& name : anims) {
             clipSelect->addItem(name);
         }
+        const bool hasAnims = !anims.isEmpty();
+        clipSelect->setEnabled(hasAnims);
+        play->setEnabled(hasAnims);
+        loop->setEnabled(hasAnims);
+        time->setEnabled(hasAnims);
+
         const QSignalBlocker vblock(variantSelect);
         variantSelect->clearItems();
-        for (const QString& name : viewport_->variantNames()) {
+        const QStringList variants = viewport_->variantNames();
+        for (const QString& name : variants) {
             variantSelect->addItem(name);
         }
+        variantSelect->setEnabled(!variants.isEmpty());
+
         const QSignalBlocker cblock(sceneCameras);
         sceneCameras->clearItems();
+        const QStringList cams = viewport_->sceneCameraNames();
         int i = 0;
-        for (const QString& name : viewport_->sceneCameraNames()) {
+        for (const QString& name : cams) {
             sceneCameras->addItem(name, QString::number(i++));
         }
         sceneCameras->setCurrentIndex(0);
+        sceneCameras->setEnabled(!cams.isEmpty());
+
         clearLayout(morphLay);
         const QStringList morphs = viewport_->morphNames();
-        const std::vector<float> weights = viewport_->morphWeights();
-        for (int m = 0; m < morphs.size(); ++m) {
-            auto* value = valueLabel(QString::number(m < static_cast<int>(weights.size()) ? weights[static_cast<size_t>(m)] : 0.0, 'f', 2), morphHost);
-            auto* slider = new Slider(morphHost);
-            slider->setRange(0, 100);
-            slider->setValue(m < static_cast<int>(weights.size()) ? qRound(weights[static_cast<size_t>(m)] * 100.0f) : 0);
-            morphLay->addWidget(sliderRow(morphs.at(m), slider, value, morphHost));
-            connect(slider, &Slider::valueChanged, this, [=](int v) {
-                value->setText(QString::number(v / 100.0, 'f', 2));
-                viewport_->setMorphWeight(m, v / 100.0f);
-            });
+        if (morphs.isEmpty()) {
+            auto* lbl = caption(QStringLiteral("No morph targets"), morphHost);
+            lbl->setEnabled(false);
+            morphLay->addWidget(lbl);
+        } else {
+            const std::vector<float> weights = viewport_->morphWeights();
+            for (int m = 0; m < morphs.size(); ++m) {
+                auto* value = valueLabel(QString::number(m < static_cast<int>(weights.size()) ? weights[static_cast<size_t>(m)] : 0.0, 'f', 2), morphHost);
+                auto* slider = new Slider(morphHost);
+                slider->setRange(0, 100);
+                slider->setValue(m < static_cast<int>(weights.size()) ? qRound(weights[static_cast<size_t>(m)] * 100.0f) : 0);
+                morphLay->addWidget(sliderRow(morphs.at(m), slider, value, morphHost));
+                connect(slider, &Slider::valueChanged, this, [=](int v) {
+                    value->setText(QString::number(v / 100.0, 'f', 2));
+                    viewport_->setMorphWeight(m, v / 100.0f);
+                });
+            }
         }
     };
     auto refreshInspector = [=]() {
         const PbrMaterial mat = viewport_->selectedMaterialData();
+        const bool hasPart = viewport_->selectedPart() >= 0;
         const QString name = mat.name.isEmpty() ? QStringLiteral("Select a part to inspect") : mat.name;
         inspectName->setText(name);
         const QColor color(qRound(mat.baseColor.x() * 255), qRound(mat.baseColor.y() * 255),
                            qRound(mat.baseColor.z() * 255));
-        Theme::bindStyle(matColor, [color]() {
-            return QStringLiteral("QPushButton { background: %1; border: 1px solid %2; border-radius: 4px; }")
-                .arg(color.name(), Theme::css(Theme::border()));
-        });
+        bindSwatchStyle(matColor, color);
+        matColor->setEnabled(hasPart);
+
         const QSignalBlocker b1(selMetal);
         const QSignalBlocker b2(selRough);
         const QSignalBlocker b3(selTrans);
@@ -1885,7 +2026,15 @@ GlStudioWindow::GlStudioWindow(QWidget* parent) : edgeqt::Window(parent) {
         selMetalValue->setText(QString::number(mat.metallic, 'f', 2));
         selRoughValue->setText(QString::number(mat.roughness, 'f', 2));
         selTransValue->setText(QString::number(mat.transmission, 'f', 2));
-        if (viewport_->selectedPart() >= 0) {
+
+        selMetal->setEnabled(hasPart);
+        selRough->setEnabled(hasPart);
+        selTrans->setEnabled(hasPart);
+        selSheen->setEnabled(hasPart);
+        selEmit->setEnabled(hasPart);
+        selUnlit->setEnabled(hasPart);
+
+        if (hasPart) {
             selectedLabel->setText(QStringLiteral("Part %1 · node %2")
                                        .arg(viewport_->selectedPart())
                                        .arg(viewport_->selectedNode()));

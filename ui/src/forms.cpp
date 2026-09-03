@@ -57,7 +57,7 @@ void Checkbox::paintEvent(QPaintEvent*) {
 Switch::Switch(QWidget* parent) : QAbstractButton(parent) {
     setCheckable(true);
     setCursor(Qt::PointingHandCursor);
-    setFixedSize(44, 24);
+    setFixedSize(32, 18);
     setAttribute(Qt::WA_Hover, true);
     setAutoFillBackground(false);
 }
@@ -84,7 +84,7 @@ void Switch::checkStateSet() {
     update();
 }
 
-QSize Switch::sizeHint() const { return {44, 24}; }
+QSize Switch::sizeHint() const { return {32, 18}; }
 
 void Switch::paintEvent(QPaintEvent*) {
     QPainter p(this);

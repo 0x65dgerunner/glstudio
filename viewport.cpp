@@ -123,6 +123,7 @@ uniform vec3 uEmissive;
 uniform float uClearcoat;
 uniform float uClearcoatRoughness;
 uniform float uAlphaCut;
+uniform float uAlphaScale;
 uniform sampler2D uAlbedoMap;
 uniform sampler2D uNormalMap;
 uniform sampler2D uMaps;
@@ -416,7 +417,7 @@ void main() {
     vec3 V = safeNormalize(uCam - vWorld);
     vec4 albedoSample = uHasAlbedo ? texture(uAlbedoMap, albedoUv) : vec4(1.0);
     vec3 albedo = uBaseColor.rgb;
-    float alpha = uBaseColor.a;
+    float alpha = uBaseColor.a * max(uAlphaScale, 0.0);
     float metallic = uMetallic;
     float roughness = uRoughness;
     float ao = 1.0;
@@ -1012,7 +1013,11 @@ void main() {
         mapped = mix(mapped, blur / 5.0, coc);
     }
     float outA = uKeepAlpha != 0 ? clamp(scene.a, 0.0, 1.0) : 1.0;
-    FragColor = vec4(clamp(mapped, 0.0, 1.0), outA);
+    vec3 outRgb = clamp(mapped, 0.0, 1.0);
+    if (uKeepAlpha != 0) {
+        outRgb *= outA;
+    }
+    FragColor = vec4(outRgb, outA);
 }
 )";
 
@@ -1312,6 +1317,17 @@ void ModelViewport::setKeyIntensity(float value) {
 }
 void ModelViewport::setAutoRotate(bool enabled) {
     autoRotate_ = enabled;
+    emit cameraChanged();
+    update();
+}
+void ModelViewport::setAuto360(bool enabled) {
+    auto360_ = enabled;
+    emit cameraChanged();
+    update();
+}
+void ModelViewport::setFloating(bool enabled) {
+    floating_ = enabled;
+    emit cameraChanged();
     update();
 }
 void ModelViewport::setGridVisible(bool visible) {
@@ -1749,13 +1765,17 @@ QJsonObject ModelViewport::cameraState() const {
     o.insert(QStringLiteral("tx"), target_.x());
     o.insert(QStringLiteral("ty"), target_.y());
     o.insert(QStringLiteral("tz"), target_.z());
+    o.insert(QStringLiteral("dofAmount"), static_cast<double>(dofAmount_));
+    o.insert(QStringLiteral("focusDistance"), static_cast<double>(focusDistance_));
+    o.insert(QStringLiteral("autoRotate"), autoRotate_);
+    o.insert(QStringLiteral("auto360"), auto360_);
     return o;
 }
 
 void ModelViewport::applyCameraState(const QJsonObject& state) {
     yaw_ = static_cast<float>(state.value(QStringLiteral("yaw")).toDouble(yaw_));
     pitch_ = qBound(-89.0f, static_cast<float>(state.value(QStringLiteral("pitch")).toDouble(pitch_)), 89.0f);
-    distance_ = qBound(1.2f, static_cast<float>(state.value(QStringLiteral("distance")).toDouble(distance_)), 40.0f);
+    distance_ = qBound(0.1f, static_cast<float>(state.value(QStringLiteral("distance")).toDouble(distance_)), 400.0f);
     fov_ = qBound(18.0f, static_cast<float>(state.value(QStringLiteral("fov")).toDouble(fov_)), 75.0f);
     target_ = QVector3D(static_cast<float>(state.value(QStringLiteral("tx")).toDouble(target_.x())),
                         static_cast<float>(state.value(QStringLiteral("ty")).toDouble(target_.y())),
@@ -1844,6 +1864,7 @@ void ModelViewport::applyLookState(const QJsonObject& state) {
     axesVisible_ = state.value(QStringLiteral("axesVisible")).toBool(axesVisible_);
     texturesEnabled_ = state.value(QStringLiteral("texturesEnabled")).toBool(texturesEnabled_);
     autoRotate_ = state.value(QStringLiteral("autoRotate")).toBool(autoRotate_);
+    auto360_ = state.value(QStringLiteral("auto360")).toBool(auto360_);
     wireframe_ = state.value(QStringLiteral("wireframe")).toBool(wireframe_);
     showLights_ = state.value(QStringLiteral("showLights")).toBool(showLights_);
     vsync_ = state.value(QStringLiteral("vsync")).toBool(vsync_);
@@ -1858,8 +1879,8 @@ void ModelViewport::applyLookState(const QJsonObject& state) {
     clayMode_ = state.value(QStringLiteral("clayMode")).toBool(clayMode_);
     floorCatcher_ = state.value(QStringLiteral("floorCatcher")).toBool(floorCatcher_);
     dofEnabled_ = state.value(QStringLiteral("dofEnabled")).toBool(dofEnabled_);
-    dofAmount_ = static_cast<float>(state.value(QStringLiteral("dofAmount")).toDouble(dofAmount_));
-    focusDistance_ = static_cast<float>(state.value(QStringLiteral("focusDistance")).toDouble(focusDistance_));
+    dofAmount_ = static_cast<float>(state.value(QStringLiteral("dofAmount")).toDouble(static_cast<double>(dofAmount_)));
+    focusDistance_ = static_cast<float>(state.value(QStringLiteral("focusDistance")).toDouble(static_cast<double>(focusDistance_)));
     lookIndex_ = state.value(QStringLiteral("lookIndex")).toInt(lookIndex_);
     tonemap_ = static_cast<Tonemap>(qBound(0, state.value(QStringLiteral("tonemap")).toInt(static_cast<int>(tonemap_)), 3));
     msaaSamples_ = state.value(QStringLiteral("msaa")).toInt(msaaSamples_);
@@ -1937,7 +1958,10 @@ bool ModelViewport::exportRender(const QString& path, int width, int height) {
     captureH_ = height;
     recreateTargets();
     updateWorldMatrices();
+    const bool oldTransparent = transparentBg_;
+    transparentBg_ = exportTransparentBg_;
     renderFrame(width, height, true);
+    transparentBg_ = oldTransparent;
     QImage image(width, height, QImage::Format_RGBA8888);
     glBindFramebuffer(GL_FRAMEBUFFER, presentFbo_ != 0 ? presentFbo_ : sceneFbo_);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -2242,8 +2266,16 @@ void ModelViewport::updateWorldMatrices() {
     applyAnimation(animationTime_);
     const std::vector<QMatrix4x4> local = composeWorldMatrices(cpuModel_);
     world_.resize(local.size());
+    QMatrix4x4 root;
+    if (auto360_) {
+        root.rotate(modelYaw_, 0.0f, 1.0f, 0.0f);
+    }
+    if (floating_) {
+        const float floatY = std::sin(sceneTime_ * 2.0f) * 0.05f * modelSize_.length();
+        root.translate(0.0f, floatY, 0.0f);
+    }
     for (size_t i = 0; i < local.size(); ++i) {
-        world_[i] = cpuModel_.fit * local[i];
+        world_[i] = root * cpuModel_.fit * local[i];
     }
     deformParts();
 }
@@ -2577,7 +2609,7 @@ void ModelViewport::drawScene(const QMatrix4x4& view, const QMatrix4x4& proj, co
     glActiveTexture(GL_TEXTURE20);
     glBindTexture(GL_TEXTURE_2D, opaqueColor_ != 0 ? opaqueColor_ : whiteTex_);
 
-    auto drawPart = [&](const GpuPart& part, bool transparent) {
+    auto drawPart = [&](const GpuPart& part, bool transparent, float alphaScale) {
         if (!partVisible(part)) {
             return;
         }
@@ -2607,6 +2639,7 @@ void ModelViewport::drawScene(const QMatrix4x4& view, const QMatrix4x4& proj, co
         glUniform1f(glGetUniformLocation(modelProgram_, "uClearcoat"), mat.cpu.clearcoat);
         glUniform1f(glGetUniformLocation(modelProgram_, "uClearcoatRoughness"), mat.cpu.clearcoatRoughness);
         glUniform1f(glGetUniformLocation(modelProgram_, "uAlphaCut"), mat.cpu.alphaCutoff);
+        glUniform1f(glGetUniformLocation(modelProgram_, "uAlphaScale"), alphaScale);
         glUniform1f(glGetUniformLocation(modelProgram_, "uTransmission"), clayMode_ ? 0.0f : mat.cpu.transmission);
         glUniform1f(glGetUniformLocation(modelProgram_, "uIor"), mat.cpu.ior);
         glUniform1f(glGetUniformLocation(modelProgram_, "uThickness"), mat.cpu.thickness);
@@ -2702,15 +2735,55 @@ void ModelViewport::drawScene(const QMatrix4x4& view, const QMatrix4x4& proj, co
     if (transPass == 0) {
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);
-        for (const GpuPart& part : parts_) {
-            drawPart(part, false);
+        
+        int activePart = selectedPart_ >= 0 ? selectedPart_ : hoveredPart_;
+        int activeNode = selectedNode_ >= 0 ? selectedNode_ : hoveredNode_;
+        bool hasSelection = (activePart >= 0 || activeNode >= 0);
+
+        // Pass 1: Opaque (or selected parts in X-ray)
+        for (size_t i = 0; i < parts_.size(); ++i) {
+            const GpuPart& part = parts_[i];
+            if (!isPartVisible(i)) continue;
+            
+            bool isSelected = (static_cast<int>(i) == activePart || part.node == activeNode);
+            float alphaScale = 1.0f;
+            
+            if (hasSelection && !isSelected) {
+                continue; // skip unselected in Pass 1
+            }
+            
+            drawPart(part, false, alphaScale);
         }
+
+        // Pass 2: Unselected parts in X-ray mode (rendered with blending)
+        if (hasSelection) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            glDepthMask(GL_FALSE);
+            for (size_t i = 0; i < parts_.size(); ++i) {
+                const GpuPart& part = parts_[i];
+                if (!isPartVisible(i)) continue;
+                bool isSelected = (static_cast<int>(i) == activePart || part.node == activeNode);
+                if (!isSelected) {
+                    drawPart(part, false, 0.15f);
+                }
+            }
+            glDepthMask(GL_TRUE);
+        }
+
     } else {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthMask(GL_FALSE);
-        for (const GpuPart& part : parts_) {
-            drawPart(part, true);
+        int activePart = selectedPart_ >= 0 ? selectedPart_ : hoveredPart_;
+        int activeNode = selectedNode_ >= 0 ? selectedNode_ : hoveredNode_;
+        bool hasSelection = (activePart >= 0 || activeNode >= 0);
+        for (size_t i = 0; i < parts_.size(); ++i) {
+            const GpuPart& part = parts_[i];
+            if (!isPartVisible(i)) continue;
+            bool isSelected = (static_cast<int>(i) == activePart || part.node == activeNode);
+            float alphaScale = (hasSelection && !isSelected) ? 0.15f : 1.0f;
+            drawPart(part, true, alphaScale);
         }
         glDepthMask(GL_TRUE);
     }
@@ -2876,9 +2949,17 @@ void ModelViewport::paintGL() {
     glEnable(GL_DEPTH_TEST);
 }
 
-void ModelViewport::renderFrame(int pixelW, int pixelH, bool) {
+void ModelViewport::renderFrame(int pixelW, int pixelH, bool autoAdjust) {
     if (sceneFbo_ == 0 || pixelW <= 0 || pixelH <= 0) {
         return;
+    }
+    const bool savedDof = dofEnabled_;
+    const bool savedRotate = autoRotate_;
+    const bool saved360 = auto360_;
+    if (autoAdjust) {
+        dofEnabled_ = false;
+        autoRotate_ = false;
+        auto360_ = false;
     }
     float useFov = fov_;
     const QMatrix4x4 sceneView = sceneCameraView(&useFov);
@@ -2952,6 +3033,10 @@ void ModelViewport::renderFrame(int pixelW, int pixelH, bool) {
     const GLuint outFbo = presentFbo_ != 0 ? presentFbo_ : defaultFramebufferObject();
     glBindFramebuffer(GL_FRAMEBUFFER, outFbo);
     glViewport(0, 0, pixelW, pixelH);
+    if (transparentBg_) {
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
     glDisable(GL_DEPTH_TEST);
     glUseProgram(compositeProgram_);
     glActiveTexture(GL_TEXTURE0);
@@ -2989,6 +3074,12 @@ void ModelViewport::renderFrame(int pixelW, int pixelH, bool) {
                 static_cast<float>(backgroundColor_.greenF()), static_cast<float>(backgroundColor_.blueF()));
     glBindVertexArray(quadVao_);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    if (autoAdjust) {
+        dofEnabled_ = savedDof;
+        autoRotate_ = savedRotate;
+        auto360_ = saved360;
+    }
 }
 
 void ModelViewport::mousePressEvent(QMouseEvent* event) {
@@ -3098,7 +3189,7 @@ void ModelViewport::pan(float dx, float dy) {
     emit cameraChanged();
 }
 void ModelViewport::zoom(float steps) {
-    distance_ = qBound(1.2f, distance_ * std::exp(-steps * 0.12f), 40.0f);
+    distance_ = qBound(0.1f, distance_ * std::exp(-steps * 0.12f), 400.0f);
     update();
     emit cameraChanged();
 }
@@ -3839,6 +3930,17 @@ void ModelViewport::tick() {
         emit cameraChanged();
         dirty = true;
     }
+    if (auto360_) {
+        modelYaw_ += 0.40f;
+        if (modelYaw_ >= 360.0f) {
+            modelYaw_ -= 360.0f;
+        }
+        dirty = true;
+    }
+    if (floating_) {
+        sceneTime_ += dt;
+        dirty = true;
+    }
     if (animationPlaying_) {
         const float duration = animationDuration();
         animationTime_ += dt;
@@ -3942,10 +4044,45 @@ void ModelViewport::setSceneLights(bool enabled) {
     emit graphicsChanged();
 }
 
-void ModelViewport::setTransparentBackground(bool enabled) {
-    transparentBg_ = enabled;
+void ModelViewport::setExportTransparentBackground(bool enabled) {
+    exportTransparentBg_ = enabled;
+}
+
+bool ModelViewport::isPartVisible(int part) const {
+    return !hiddenParts_.count(part);
+}
+
+void ModelViewport::setPartVisible(int part, bool visible) {
+    if (part < 0) return;
+    if (visible) {
+        hiddenParts_.erase(part);
+    } else {
+        hiddenParts_.insert(part);
+    }
     update();
-    emit graphicsChanged();
+}
+
+void ModelViewport::setNodeVisible(int node, bool visible) {
+    if (node < 0 || node >= static_cast<int>(cpuModel_.nodes.size())) return;
+    
+    std::unordered_set<int> descendants;
+    descendants.insert(node);
+    bool added = true;
+    while (added) {
+        added = false;
+        for (int i = 0; i < static_cast<int>(cpuModel_.nodes.size()); ++i) {
+            if (descendants.count(cpuModel_.nodes[i].parent) && !descendants.count(i)) {
+                descendants.insert(i);
+                added = true;
+            }
+        }
+    }
+    
+    for (size_t i = 0; i < parts_.size(); ++i) {
+        if (descendants.count(parts_[i].node)) {
+            setPartVisible(static_cast<int>(i), visible);
+        }
+    }
 }
 
 void ModelViewport::setDofEnabled(bool enabled) {
@@ -4043,6 +4180,18 @@ void ModelViewport::setVariantIndex(int index) {
     }
     update();
     emit modelChanged();
+}
+
+void ModelViewport::setHoveredNode(int node) {
+    if (hoveredNode_ == node) return;
+    hoveredNode_ = node;
+    update();
+}
+
+void ModelViewport::setHoveredPart(int part) {
+    if (hoveredPart_ == part) return;
+    hoveredPart_ = part;
+    update();
 }
 
 void ModelViewport::setSelectedNode(int node) {
@@ -4478,7 +4627,7 @@ float ModelViewport::pickDepth(const QPoint& pos) {
     if (part < 0) {
         return distance_;
     }
-    return qBound(0.4f, distance_ * 0.85f, 40.0f);
+    return qBound(0.1f, distance_ * 0.85f, 400.0f);
 }
 
 bool ModelViewport::exportTurntable(const QString& path, int width, int height, int frames) {
@@ -4487,7 +4636,9 @@ bool ModelViewport::exportTurntable(const QString& path, int width, int height, 
     }
     const float savedYaw = yaw_;
     const bool savedRotate = autoRotate_;
+    const bool saved360 = auto360_;
     autoRotate_ = false;
+    auto360_ = false;
     QTemporaryDir temp;
     if (!temp.isValid()) {
         return false;
@@ -4499,11 +4650,13 @@ bool ModelViewport::exportTurntable(const QString& path, int width, int height, 
         if (!exportRender(framePath, width, height)) {
             yaw_ = savedYaw;
             autoRotate_ = savedRotate;
+            auto360_ = saved360;
             return false;
         }
     }
     yaw_ = savedYaw;
     autoRotate_ = savedRotate;
+    auto360_ = saved360;
     QStringList args;
     args << QStringLiteral("-y") << QStringLiteral("-framerate") << QStringLiteral("30") << QStringLiteral("-i")
          << temp.filePath(QStringLiteral("frame_%04d.png")) << QStringLiteral("-c:v") << QStringLiteral("libx264")

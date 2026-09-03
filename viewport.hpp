@@ -14,6 +14,7 @@
 #include <QStringList>
 #include <QVector3D>
 
+#include <unordered_set>
 #include <vector>
 
 class QMouseEvent;
@@ -90,6 +91,9 @@ public:
     float anisotropy() const { return anisotropy_; }
     int bloomPasses() const { return bloomPasses_; }
     bool autoRotate() const { return autoRotate_; }
+    bool auto360() const { return auto360_; }
+    bool floating() const { return floating_; }
+    void setFloating(bool enabled);
     bool gridVisible() const { return gridVisible_; }
     bool axesVisible() const { return axesVisible_; }
     bool texturesEnabled() const { return texturesEnabled_; }
@@ -127,6 +131,8 @@ public:
     std::vector<OutlinerItem> outlinerItems() const;
     int selectedNode() const { return selectedNode_; }
     int selectedPart() const { return selectedPart_; }
+    int hoveredPart() const { return hoveredPart_; }
+    int hoveredNode() const { return hoveredNode_; }
     int selectedMaterial() const { return selectedMaterial_; }
     int isolatedNode() const { return isolatedNode_; }
     bool clayMode() const { return clayMode_; }
@@ -175,6 +181,7 @@ public slots:
     void setFillColor(const QColor& color);
     void setRimColor(const QColor& color);
     void setAutoRotate(bool enabled);
+    void setAuto360(bool enabled);
     void setGridVisible(bool visible);
     void setAxesVisible(bool visible);
     void setTexturesEnabled(bool enabled);
@@ -227,16 +234,21 @@ public slots:
     void setClayMode(bool enabled);
     void setFloorCatcher(bool enabled);
     void setSceneLights(bool enabled);
-    void setTransparentBackground(bool enabled);
+    void setExportTransparentBackground(bool enabled);
     void setDofEnabled(bool enabled);
     void setDofAmount(float value);
     void setFocusDistance(float value);
     void applyLook(int index);
     void setVariantIndex(int index);
     void setSelectedNode(int node);
-    void setSelectedPart(int part);
+    void setSelectedPart(int index);
+    void setHoveredPart(int index);
+    void setHoveredNode(int index);
     void setIsolatedNode(int node);
     void clearIsolation();
+    void setPartVisible(int part, bool visible);
+    void setNodeVisible(int node, bool visible);
+    bool isPartVisible(int part) const;
     void setPartHidden(int part, bool hidden);
     void setAnimationIndex(int index);
     void setAnimationPlaying(bool playing);
@@ -497,6 +509,10 @@ private:
     int msaaActual_ = 0;
     int bloomPasses_ = 2;
     bool autoRotate_ = false;
+    bool auto360_ = false;
+    bool floating_ = false;
+    float sceneTime_ = 0.0f;
+    float modelYaw_ = 0.0f;
     bool gridVisible_ = false;
     bool axesVisible_ = false;
     bool texturesEnabled_ = true;
@@ -516,6 +532,7 @@ private:
     bool floorCatcher_ = false;
     bool sceneLights_ = true;
     bool transparentBg_ = false;
+    bool exportTransparentBg_ = false;
     bool dofEnabled_ = false;
     bool animationPlaying_ = false;
     bool animationLoop_ = true;
@@ -525,13 +542,16 @@ private:
     int variantIndex_ = -1;
     int animationIndex_ = 0;
     int sceneCameraIndex_ = -1;
-    int selectedNode_ = -1;
-    int selectedPart_ = -1;
-    int selectedMaterial_ = -1;
     int isolatedNode_ = -1;
+    int selectedPart_ = -1;
+    int hoveredPart_ = -1;
+    int selectedNode_ = -1;
+    int hoveredNode_ = -1;
+    int selectedMaterial_ = -1;
     float animationTime_ = 0.0f;
     std::vector<float> morphWeights_;
     std::vector<SceneNode> bindNodes_;
+    std::unordered_set<int> hiddenParts_;
     bool dragged_ = false;
     Lighting lighting_ = Lighting::Dark;
     Quality quality_ = Quality::Ultra;

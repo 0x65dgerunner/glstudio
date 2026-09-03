@@ -384,10 +384,11 @@ void ThemeToggle::paintEvent(QPaintEvent*) {
         path.addRoundedRect(bounds, 6, 6);
         painter.fillPath(path, Theme::hover());
     }
-    const QString icon = Theme::mode() == Theme::Mode::Dark ? QStringLiteral("sun-01")
-                                                           : QStringLiteral("moon-01");
+    const QString icon = Theme::mode() == Theme::Mode::Dark ? QStringLiteral("moon-02")
+                                                           : QStringLiteral("sun-03");
+    const QString iconPath = (hovered_ || isDown()) ? Icons::solid(icon) : Icons::stroke(icon);
     const QPixmap pix =
-        Icons::pixmap(Icons::stroke(icon), 16, Theme::mutedForeground(), devicePixelRatioF());
+        Icons::pixmap(iconPath, 16, Theme::mutedForeground(), devicePixelRatioF());
     painter.drawPixmap((width() - 16) / 2, (height() - 16) / 2, pix);
 }
 
